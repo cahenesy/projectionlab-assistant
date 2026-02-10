@@ -15,15 +15,15 @@ We welcome all kinds of contributions: bug fixes, new features (e.g., better LLM
 
 ### 1. Found a Bug or Have an Idea?
 
-- Open an **Issue** on GitHub: https://github.com/cahenesy/ProjectionLabAssistant/issues
+- Open an **Issue** on GitHub: https://github.com/cahenesy/projectionlab-assistant/issues
 - Use a clear title and description.
 - Include steps to reproduce (for bugs), screenshots if visual, or mockups for new features.
 - Label it appropriately (bug, enhancement, question, etc.) if you can.
 
 ### 2. Want to Submit Code or Docs?
 
-1. Fork the repo: https://github.com/cahenesy/ProjectionLabAssistant
-2. Create a branch from `main`:
+1. Fork the repo: https://github.com/cahenesy/projectionlab-assistant
+2. Create a branch from `master`:
 git checkout -b feature/your-feature-name
 (or `fix/bug-description`, `docs/update-readme`, etc.)
 3. Make your changes:
@@ -36,7 +36,7 @@ git checkout -b feature/your-feature-name
 git commit -m "Add support for Grok API in LLM config"
 5. Push your branch and open a **Pull Request** (PR):
 
-- Target `main`.
+- Target `master`.
 - Describe what you changed and why.
 - Reference any related issues (e.g., "Fixes #42").
 
