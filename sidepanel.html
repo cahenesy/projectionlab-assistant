@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ProjectionLab Assistant</title>
+  <script src="marked.min.js"></script> <!-- local copy required – download from https://cdn.jsdelivr.net/npm/marked/marked.min.js -->
+  <style>
+    :root {
+      /* When on PL tab: use ONLY the mirrored --v-theme-* variables (no fallbacks) */
+      --bg: var(--v-theme-background);
+      --text: var(--v-theme-on-background);
+      --primary: var(--v-theme-primary);
+      --border: var(--v-theme-divider);
+      --chat-bg: var(--v-theme-background);
+      --bot-bg: var(--v-theme-surface);
+      --code-bg: var(--v-theme-surface-bright);
+      --surface: var(--v-theme-surface);
+      --on-surface: var(--v-theme-on-surface);
+      --surface-variant: var(--v-theme-surface-variant);
+      --on-surface-variant: var(--v-theme-on-surface-variant);
+      --surface-bright: var(--v-theme-surface-bright);
+      --surface-light: var(--v-theme-surface-light);
+      --error: var(--v-theme-error);
+      --info: var(--v-theme-info);
+      --success: var(--v-theme-success);
+      --warning: var(--v-theme-warning);
+    }
+
+    /* Fallback light theme ONLY when not on a PL tab */
+    .fallback-light {
+      --bg: 255 255 255;
+      --text: 17 24 39;
+      --primary: 33 150 243;
+      --border: 209 213 219;
+      --chat-bg: 249 250 251;
+      --bot-bg: 229 231 235;
+      --code-bg: 243 244 246;
+      --surface: 255 255 255;
+      --on-surface: 17 24 39;
+      --surface-variant: 229 231 235;
+      --on-surface-variant: 17 24 39;
+      --surface-bright: 255 255 255;
+      --surface-light: 249 250 251;
+      --v-high-emphasis-opacity: 0.87;
+      --v-medium-emphasis-opacity: 0.6;
+      --v-disabled-opacity: 0.38;
+      --v-border-opacity: 0.12;
+      --v-theme-on-primary: 255 255 255; /* White for on-primary */
+    }
+
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background: rgb(var(--bg)) !important;
+      color: rgba(var(--text), var(--v-high-emphasis-opacity, 0.87)) !important;
+    }
+
+    #chat-history {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      background: rgb(var(--chat-bg)) !important;
+    }
+
+    .message {
+      margin: 12px 0;
+      padding: 12px 16px;
+      border-radius: 12px;
+      max-width: 85%;
+      line-height: 1.5;
+      position: relative;
+      background: rgb(var(--surface-variant)) !important;
+      color: rgba(var(--on-surface), var(--v-high-emphasis-opacity, 0.87)) !important;
+      border: 1px solid rgba(var(--border), var(--v-border-opacity, 0.12)) !important;
+    }
+
+    .user {
+      background: rgb(var(--primary)) !important;
+      color: rgba(var(--v-theme-on-primary, 255 255 255), var(--v-high-emphasis-opacity, 0.87)) !important;
+      margin-left: auto;
+      border-bottom-right-radius: 4px;
+    }
+
+    .bot {
+      background: rgb(var(--bot-bg)) !important;
+      margin-right: auto;
+      border-bottom-left-radius: 4px;
+      color: rgba(var(--on-surface), var(--v-high-emphasis-opacity, 0.87)) !important;
+    }
+
+    .bot-content {
+      padding-right: 60px;
+    }
+
+    .copy-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: transparent !important;
+      border: none !important;
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-size: 12px;
+      cursor: pointer;
+      color: rgba(var(--on-surface-variant), var(--v-medium-emphasis-opacity, 0.6)) !important;
+      opacity: 0.7;
+      transition: all 0.15s;
+    }
+
+    .copy-btn:hover {
+      opacity: 1;
+      background: rgb(var(--surface-bright)) !important;
+    }
+
+    #input-area {
+      display: flex;
+      padding: 12px;
+      border-top: 1px solid rgba(var(--border), var(--v-border-opacity, 0.12)) !important;
+      background: rgb(var(--bg)) !important;
+    }
+
+    #chat-input {
+      flex: 1;
+      padding: 10px 12px;
+      border: 1px solid rgba(var(--border), var(--v-border-opacity, 0.12)) !important;
+      border-radius: 8px;
+      font-size: 15px;
+      background: rgb(var(--surface-variant)) !important;
+      color: rgba(var(--on-surface), var(--v-high-emphasis-opacity, 0.87)) !important;
+    }
+
+    #chat-input:focus {
+      border-color: rgb(var(--primary)) !important;
+      outline: none;
+    }
+
+    #send-btn {
+      margin-left: 8px;
+      padding: 10px 20px;
+      background: rgb(var(--primary)) !important;
+      color: rgba(var(--v-theme-on-primary, 255 255 255), var(--v-high-emphasis-opacity, 0.87)) !important;
+      border: none !important;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+
+    #send-btn:hover {
+      background: rgb(var(--v-theme-primary-darken-1, 25 118 210)) !important; /* Fallback to a darkened primary; adjust if --v-theme-primary-darken-1 is captured */
+    }
+
+    #header {
+      position: relative;
+      padding: 12px 16px;
+      background: rgb(var(--primary)) !important;
+      color: rgba(var(--v-theme-on-primary, 255 255 255), var(--v-high-emphasis-opacity, 0.87)) !important;
+      font-weight: 600;
+      text-align: center;
+      font-size: 1.1rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #header-title {
+      flex: 1;
+    }
+
+    #reset-btn, #settings-btn {
+      background: none !important;
+      border: none !important;
+      color: rgba(var(--v-theme-on-primary, 255 255 255), var(--v-high-emphasis-opacity, 0.87)) !important;
+      font-size: 22px;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 50%;
+      transition: background 0.2s;
+    }
+
+    #reset-btn:hover, #settings-btn:hover {
+      background: rgba(255 255 255, 0.2) !important; /* Direct white with opacity */
+    }
+
+    /* Markdown content */
+    .bot-content {
+      color: rgba(var(--on-surface), var(--v-high-emphasis-opacity, 0.87)) !important;
+    }
+    .bot-content h1, .bot-content h2, .bot-content h3 {
+      margin: 20px 0 10px;
+      color: rgba(var(--text), var(--v-high-emphasis-opacity, 0.87)) !important;
+    }
+    .bot-content p { margin: 12px 0; }
+    .bot-content ul, .bot-content ol { margin: 10px 0 16px 24px; padding-left: 0; }
+    .bot-content li { margin-bottom: 6px; }
+    .bot-content strong { font-weight: 600; color: rgba(var(--text), var(--v-high-emphasis-opacity, 0.87)) !important; }
+    .bot-content code { background: rgb(var(--code-bg)) !important; color: rgba(var(--on-surface), var(--v-high-emphasis-opacity, 0.87)) !important; }
+    .bot-content pre { background: rgb(var(--code-bg)) !important; color: rgba(var(--on-surface), var(--v-high-emphasis-opacity, 0.87)) !important; }
+    .bot-content table { border-color: rgba(var(--border), var(--v-border-opacity, 0.12)) !important; }
+    .bot-content th { background: rgb(var(--surface-variant)) !important; color: rgba(var(--on-surface-variant), var(--v-medium-emphasis-opacity, 0.6)) !important; }
+    .bot-content td { color: rgba(var(--on-surface), var(--v-high-emphasis-opacity, 0.87)) !important; }
+
+    /* No-tab message */
+    #no-tab-message {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      padding: 24px;
+      color: rgba(var(--text), var(--v-high-emphasis-opacity, 0.87)) !important;
+      background: rgb(var(--bg)) !important;
+    }
+
+    #no-tab-message p {
+      font-size: 1rem;
+      max-width: 80%;
+      margin: 16px 0;
+    }
+
+    #no-tab-message a {
+      color: rgb(var(--primary)) !important;
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    #no-tab-message a:hover {
+      text-decoration: underline;
+    }
+
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div id="header">
+    <button id="reset-btn" title="New Chat">⟳</button>
+    <span id="header-title">ProjectionLab Assistant</span>
+    <button id="settings-btn" title="Open settings">⚙</button>
+  </div>
+
+  <div id="no-tab-message" class="hidden">
+    <p>Please select your ProjectionLab tab or <a href="#" id="open-pl-link">browse to https://app.projectionlab.com</a> and login to use ProjectionLab Assistant.</p>
+  </div>
+
+  <div id="chat-history"></div>
+
+  <div id="input-area">
+    <input id="chat-input" type="text" placeholder="Ask about your plan...">
+    <button id="send-btn">Send</button>
+  </div>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

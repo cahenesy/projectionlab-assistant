@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ProjectionLab Assistant Options</title>
+</head>
+<body>
+  <h1>Configure API Keys - ProjectionLab Assistant</h1>
+  
+  <label>ProjectionLab Plugin API Key:</label><br>
+  <input type="text" id="plaApiKey"><br><br>
+  
+  <label>LLM Provider:</label><br>
+  <select id="llmProvider">
+    <option value="openai">OpenAI (or compatible)</option>
+    <option value="xai">xAI (Grok)</option>
+    <option value="anthropic">Anthropic (Claude)</option>
+  </select><br><br>
+  
+  <label>LLM API Key:</label><br>
+  <input type="text" id="llmApiKey"><br><br>
+  
+  <label>LLM Base URL:</label><br>
+  <input type="text" id="llmBaseUrl"><br><br>
+  
+  <label>LLM Model:</label><br>
+  <input type="text" id="llmModel"><br><br>
+  
+  <button id="save">Save</button>
+  <div id="status"></div>
+
+  <script src="options.js"></script>
+</body>
+</html>
