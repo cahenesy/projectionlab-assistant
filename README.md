@@ -7,10 +7,6 @@ A Chrome extension that provides an AI-powered chatbot side panel for Projection
 - Supports OpenAI-compatible LLMs, Grok (xAI), or Claude (Anthropic)
 - Dynamic theming to match ProjectionLab's color schemes
 
-**Screenshots**:
-- [Sidebar in action] (add image URL from GitHub or Imgur)
-- [Options page] (add image URL)
-
 ## Licensing
 
 This project is dual-licensed:
