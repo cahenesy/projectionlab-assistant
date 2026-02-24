@@ -14,6 +14,8 @@ const resetBtn = document.getElementById('reset-btn');
 
 // Storage key for persistent chat
 const STORAGE_KEY = 'pla_chat_history';
+// Storage key for pre-update data (for security clearing)
+const PRE_UPDATE_STORAGE_KEY = 'pla_pre_update_data';
 
 // ── Simplified theme mirroring ──
 async function applyProjectionLabTheme() {
@@ -83,9 +85,10 @@ async function saveHistory() {
   const messages = [];
   historyDiv.querySelectorAll('.message').forEach(el => {
     const isUser = el.classList.contains('user');
+    const text = el.dataset.rawText || el.textContent.trim();
     messages.push({
       sender: isUser ? 'user' : 'bot',
-      text: el.textContent.trim()
+      text
     });
   });
   await chrome.storage.local.set({ [STORAGE_KEY]: messages });
@@ -97,6 +100,7 @@ function addMessage(sender, text, shouldSave = true) {
   div.className = `message ${sender}`;
 
   if (sender === 'bot') {
+    div.dataset.rawText = text;  // Preserve raw Markdown for history
     const contentDiv = document.createElement('div');
     contentDiv.className = 'bot-content';
     contentDiv.innerHTML = marked.parse(text, {
@@ -129,7 +133,38 @@ function addMessage(sender, text, shouldSave = true) {
 function resetChat() {
   historyDiv.innerHTML = '';
   addMessage('bot', 'New chat started. How can I help you today?');
-  chrome.storage.local.remove(STORAGE_KEY);
+  chrome.storage.local.remove([STORAGE_KEY, PRE_UPDATE_STORAGE_KEY]);  // Enhanced security: Clear pre-update data on reset
+}
+
+// ── Collect current history for LLM ──
+function getCurrentHistory() {
+  const messages = [];
+  let totalLength = 0;
+  const MAX_LENGTH = 100000;  // ~25k tokens safety limit; adjust as needed
+  const MAX_MESSAGES = 15;    // Fallback to last N messages
+
+  historyDiv.querySelectorAll('.message').forEach(el => {
+    const role = el.classList.contains('user') ? 'user' : 'assistant';
+    const text = el.dataset.rawText || el.textContent.trim();
+    if (text) {
+      messages.push({ role, content: text });
+      totalLength += text.length;
+    }
+  });
+
+  // Truncate if over limit
+  while (totalLength > MAX_LENGTH && messages.length > 1) {
+    const removed = messages.shift();
+    totalLength -= removed.content.length;
+  }
+
+  // Fallback to last MAX_MESSAGES if still too long or for safety
+  if (messages.length > MAX_MESSAGES) {
+    messages.splice(0, messages.length - MAX_MESSAGES);
+  }
+
+  console.log("[PLA:SidePanel] History truncated to", messages.length, "messages (total chars:", totalLength, ")");
+  return messages;
 }
 
 // ── Send ──
@@ -142,7 +177,9 @@ async function send() {
 
   showTypingDots();
 
-  chrome.runtime.sendMessage({ action: 'processQuery', query }, response => {
+  const messages = getCurrentHistory();  // Includes the latest user message
+
+  chrome.runtime.sendMessage({ action: 'processQuery', messages }, response => {
     hideTypingDots();
 
     if (response?.success && response?.answer) {

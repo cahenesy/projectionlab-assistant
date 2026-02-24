@@ -8,6 +8,9 @@
 console.log("[PLA:Content] Content script loaded on", window.location.href);
 console.log("[PLA:Content] Extension ID:", chrome.runtime.id);
 
+// Storage key for pre-update data
+const PRE_UPDATE_STORAGE_KEY = 'pla_pre_update_data';
+
 // Message listener
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log("[PLA:Content] MESSAGE RECEIVED from runtime:", request);
@@ -15,7 +18,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   if (request.action === "runLLMQuery") {
     console.log("[PLA:Content] Received tabId from background:", request.tabId);
-    console.log("[PLA:Content] Starting LLM query processing — user query:", request.query);
+    console.log("[PLA:Content] Starting LLM query processing — messages length:", request.messages?.length);
 
     (async () => {
       let typingSent = false;
@@ -44,7 +47,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         chrome.runtime.sendMessage({ action: "showTypingIndicator" });
         typingSent = true;
 
-        console.log("[PLA:Content] Requesting plan export from background...");
+        // Initial data fetch for non-confirmation queries
+        console.log("[PLA:Content] Requesting initial plan export from background...");
         const exportResponse = await new Promise((resolve) => {
           chrome.runtime.sendMessage({
             action: "getPlanData",
@@ -72,7 +76,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           console.log("[PLA:Content] Data summary length:", dataSummary.length);
         }
 
-        const prompt = `You are a financial planning assistant for ProjectionLab.
+        // System prompt (updated as above)
+        const system = `You are a financial planning assistant for ProjectionLab.
 
 Respond in clean, well-formatted Markdown using:
 - # for main headings
@@ -83,21 +88,26 @@ Respond in clean, well-formatted Markdown using:
 - Tables in Markdown format when comparing things
 - Short paragraphs, avoid walls of text
 
-User query: "${request.query}"
+If the conversation involves an analysis request, provide a detailed, structured analysis.
 
-Current plan data (summary): ${dataSummary}
+If you have suggestions for improvements during analysis, list them under ## Suggestions for Improvement as a bullet list, describing each clearly.
 
-If this is an analysis request, provide detailed, structured analysis.
-If this is an update request, respond ONLY with valid JSON like:
-{ "actions": [{ "action": "updateAccount", ... }] }
+At the end of an analysis with suggestions, add: **Would you like me to apply these changes? Reply with "yes" or "apply changes" to confirm.**
 
-Do NOT include any other text outside the Markdown (analysis) or JSON (updates).`;
+If the user is confirming to apply suggestions from the previous response (e.g., "yes", "apply changes"), review the conversation history, extract the suggestions from your prior analysis, and respond ONLY with valid JSON like:
+{ "actions": [{ "action": "updateAccount", "accountId": "12345", "data": { "balance": 10000 } }] }
+For restoreCurrentFinances, restorePlans, or restoreProgress, ALWAYS output the FULL complete dataset for that category (e.g., "data": [complete array of plans with modifications incorporated]), based on the provided current plan data summary. Do NOT send partial or incremental updates for these methods, as they require wholesale replacement to avoid data loss.
+Adapt the JSON structure to match ProjectionLab's API methods (e.g., include required fields like account IDs if available from plan data; use "options": { "force": "value" } if needed for new properties).
 
-        console.log("[PLA:Content] Generated prompt length:", prompt.length);
+If the user requests to undo or revert changes (e.g., "undo", "revert last changes"), respond ONLY with { "action": "revert" } to trigger restoration from the pre-update state.
 
-        console.log("[PLA:Content] Sending request to LLM provider:", stored.llmProvider);
+Do NOT include any other text outside the Markdown (for analysis) or JSON (updates).`;
+
+        console.log("[PLA:Content] Sending initial request to LLM provider:", stored.llmProvider);
         const llmResponse = await fetchLLMResponse(
-          prompt,
+          system,
+          request.messages,
+          dataSummary,
           stored.llmApiKey,
           stored.llmBaseUrl,
           stored.llmModel,
@@ -111,18 +121,130 @@ Do NOT include any other text outside the Markdown (analysis) or JSON (updates).
         let actionsApplied = false;
 
         if (llmResponse.trim().startsWith('{')) {
-          console.log("[PLA:Content] LLM response appears to be JSON — attempting parse");
+          console.log("[PLA:Content] LLM response appears to be JSON — possible confirmation or revert");
           try {
             const parsed = JSON.parse(llmResponse);
-            console.log("[PLA:Content] Parsed JSON:", parsed);
-            const actions = parsed.actions || [];
-            if (actions.length > 0) {
-              console.log("[PLA:Content] Found", actions.length, "actions to apply:", actions);
-              // TODO: implement actual action calling when ready
-              actionsApplied = true;
-              finalAnswer += "\n\nChanges parsed (application not yet implemented).";
+            if (parsed.action === "revert") {
+              // Handle revert
+              const { [PRE_UPDATE_STORAGE_KEY]: preUpdateData } = await chrome.storage.local.get(PRE_UPDATE_STORAGE_KEY);
+              if (!preUpdateData) {
+                throw new Error("No pre-update data available for revert.");
+              }
+              // Apply restore using pre-update data (assuming it's the full export)
+              let revertResults = [];
+              // Example: Restore finances, plans, progress if present in preUpdateData
+              for (let method of ['restoreCurrentFinances', 'restorePlans', 'restoreProgress']) {
+                if (preUpdateData[method.toLowerCase().replace('restore', '')]) {  // e.g., currentFinances
+                  const params = { data: preUpdateData[method.toLowerCase().replace('restore', '')] };
+                  const revertResponse = await new Promise((resolve) => {
+                    chrome.runtime.sendMessage({
+                      action: "executePluginMethod",
+                      method,
+                      params,
+                      apiKey: stored.plaApiKey
+                    }, resolve);
+                  });
+                  if (revertResponse.success) {
+                    revertResults.push({ success: true, method });
+                  } else {
+                    revertResults.push({ success: false, method, error: revertResponse.error });
+                  }
+                }
+              }
+              let statusMessage = "## Revert Status\n\n";
+              revertResults.forEach(r => {
+                statusMessage += `- **${r.method}**: ${r.success ? 'Success' : `Failed - ${r.error}`}\n`;
+              });
+              if (revertResults.every(r => r.success)) {
+                statusMessage += "\nReverted successfully. Refresh the page if needed. No further undo available until next apply.";
+              } else if (revertResults.some(r => r.success)) {
+                statusMessage += "\nPartial revert. Some data restored, but errors occurred.";
+              } else {
+                statusMessage += "\nRevert failed. Please check the errors.";
+              }
+              finalAnswer = statusMessage;
+              // Clear stored pre-update data after successful revert
+              if (revertResults.every(r => r.success)) {
+                await chrome.storage.local.remove(PRE_UPDATE_STORAGE_KEY);
+              }
             } else {
-              console.log("[PLA:Content] No actions array found in parsed JSON");
+              // Handle confirmation: Fetch fresh data
+              console.log("[PLA:Content] Confirmation detected — fetching fresh plan data");
+              const freshExportResponse = await new Promise((resolve) => {
+                chrome.runtime.sendMessage({
+                  action: "getPlanData",
+                  apiKey: stored.plaApiKey
+                }, resolve);
+              });
+              if (!freshExportResponse?.success) {
+                throw new Error("Failed to fetch fresh plan data for updates.");
+              }
+              const freshExported = freshExportResponse.data;
+              let freshDataSummary = JSON.stringify(freshExported);
+              if (freshDataSummary.length > 150000) {
+                freshDataSummary = freshDataSummary.substring(0, 150000) + "\n... [truncated]";
+              }
+
+              // Store pre-update data for potential revert
+              await chrome.storage.local.set({ [PRE_UPDATE_STORAGE_KEY]: freshExported });
+              console.log("[PLA:Content] Pre-update data stored for revert.");
+
+              // Secondary LLM call with fresh data to generate accurate JSON
+              console.log("[PLA:Content] Sending secondary LLM request with fresh data");
+              const updateMessages = [...request.messages, { role: 'assistant', content: llmResponse }];  // Include initial response
+              const updateJson = await fetchLLMResponse(
+                system,
+                updateMessages,
+                freshDataSummary,
+                stored.llmApiKey,
+                stored.llmBaseUrl,
+                stored.llmModel,
+                stored.llmProvider
+              );
+
+              // Now parse and apply the new JSON
+              const updateParsed = JSON.parse(updateJson);
+              const actions = updateParsed.actions || [];
+              if (actions.length > 0) {
+                console.log("[PLA:Content] Found", actions.length, "actions to apply from fresh JSON");
+                let applyResults = [];
+                for (let item of actions) {
+                  const params = { ...item };
+                  delete params.action;  // Remove 'action' key if present
+                  const applyResponse = await new Promise((resolve) => {
+                    chrome.runtime.sendMessage({
+                      action: "executePluginMethod",
+                      method: item.action,
+                      params,
+                      apiKey: stored.plaApiKey
+                    }, resolve);
+                  });
+                  if (applyResponse.success) {
+                    console.log("[PLA:Content] Action applied:", item.action);
+                    applyResults.push({ success: true, action: item.action, details: applyResponse.data });
+                  } else {
+                    console.error("[PLA:Content] Action failed:", item.action, applyResponse.error);
+                    applyResults.push({ success: false, action: item.action, error: applyResponse.error });
+                  }
+                }
+                actionsApplied = true;
+                let statusMessage = "## Changes Application Status\n\n";
+                applyResults.forEach(r => {
+                  statusMessage += `- **${r.action}**: ${r.success ? 'Success' : `Failed - ${r.error}`}\n`;
+                });
+                if (applyResults.every(r => r.success)) {
+                  statusMessage += "\nAll changes applied successfully! Refresh the page if needed to see updates. Reply 'undo' if you want to revert.";
+                } else if (applyResults.some(r => r.success)) {
+                  statusMessage += "\nPartial success. Some changes applied, but errors occurred. Please review and try again if needed.";
+                } else {
+                  statusMessage += "\nAll changes failed. Please check the errors and try again.";
+                  // Clear stored data on full failure
+                  await chrome.storage.local.remove(PRE_UPDATE_STORAGE_KEY);
+                }
+                finalAnswer = statusMessage;
+              } else {
+                console.log("[PLA:Content] No actions in fresh JSON");
+              }
             }
           } catch (parseErr) {
             console.warn("[PLA:Content] LLM returned JSON-like text but parsing failed:", parseErr);
@@ -159,37 +281,44 @@ Do NOT include any other text outside the Markdown (analysis) or JSON (updates).
   return true;
 });
 
-// LLM fetch helper (unchanged)
-async function fetchLLMResponse(prompt, apiKey, baseUrl, model, provider) {
+// Updated LLM fetch helper to support history
+async function fetchLLMResponse(system, historyMessages, dataSummary, apiKey, baseUrl, model, provider) {
   console.log("[PLA:Content] fetchLLMResponse — provider:", provider, "model:", model, "baseUrl:", baseUrl);
+  console.log("[PLA:Content] History messages length:", historyMessages.length);
+
+  // Append data summary to the last user message
+  const messages = historyMessages.map(m => ({ role: m.role, content: m.content }));
+  if (messages.length > 0 && messages[messages.length - 1].role === 'user') {
+    messages[messages.length - 1].content += `\n\nCurrent plan data (summary): ${dataSummary}`;
+  }
 
   let endpoint, headers, body;
 
+  const bodyObj = {
+    model,
+    temperature: 0.7
+  };
+
   if (provider === 'anthropic') {
+    bodyObj.system = system;
+    bodyObj.messages = messages;
+    bodyObj.max_tokens = 4096;
     endpoint = `${baseUrl}/messages`;
     headers = {
       'Content-Type': 'application/json',
       'x-api-key': apiKey,
       'anthropic-version': '2023-06-01'
     };
-    body = JSON.stringify({
-      model,
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: 4096,
-      temperature: 0.7
-    });
   } else {
+    bodyObj.messages = [{ role: 'system', content: system }, ...messages];
     endpoint = `${baseUrl}/chat/completions`;
     headers = {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`
     };
-    body = JSON.stringify({
-      model,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.7
-    });
   }
+
+  body = JSON.stringify(bodyObj);
 
   console.log("[PLA:Content] LLM request — endpoint:", endpoint);
   console.log("[PLA:Content] Request body length:", body.length);
