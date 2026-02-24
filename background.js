@@ -34,7 +34,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
       chrome.tabs.sendMessage(tabId, {
         action: "runLLMQuery",
-        query: request.query,
+        messages: request.messages,
         tabId: tabId
       }, response => {
         if (chrome.runtime.lastError) {
@@ -78,6 +78,55 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           return method({ key: apiKey });
         },
         args: [request.apiKey]
+      }, (results) => {
+        if (chrome.runtime.lastError) {
+          console.error("[PLA:Background] executeScript failed:", chrome.runtime.lastError.message);
+          sendResponse({ success: false, error: chrome.runtime.lastError.message });
+          return;
+        }
+
+        const result = results?.[0]?.result;
+        if (result === undefined) {
+          sendResponse({ success: false, error: "No result from plugin method" });
+        } else {
+          sendResponse({ success: true, data: result });
+        }
+      });
+    });
+
+    return true;
+  }
+
+  if (request.action === "executePluginMethod") {
+    console.log("[PLA:Background] Handling executePluginMethod — method:", request.method);
+
+    chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
+      if (!tabs?.[0]) {
+        console.error("[PLA:Background] No active tab for method execution");
+        sendResponse({ success: false, error: "No active tab" });
+        return;
+      }
+
+      const tabId = tabs[0].id;
+      console.log("[PLA:Background] Injecting method", request.method, "into tabId:", tabId);
+
+      const params = { key: request.apiKey, ...request.params };
+
+      chrome.scripting.executeScript({
+        target: { tabId },
+        world: 'MAIN',
+        func: (methodName, params) => {
+          console.log("[PLA:Injected] Executing method:", methodName);
+          if (!window.projectionlabPluginAPI) {
+            throw new Error("projectionlabPluginAPI not found – ensure logged in and plugins enabled");
+          }
+          const method = window.projectionlabPluginAPI[methodName];
+          if (typeof method !== 'function') {
+            throw new Error(`Method ${methodName} not available`);
+          }
+          return method(params);
+        },
+        args: [request.method, params]
       }, (results) => {
         if (chrome.runtime.lastError) {
           console.error("[PLA:Background] executeScript failed:", chrome.runtime.lastError.message);
