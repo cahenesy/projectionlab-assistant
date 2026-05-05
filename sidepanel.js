@@ -18,17 +18,31 @@ const STORAGE_KEY = 'pla_chat_history';
 const PRE_UPDATE_STORAGE_KEY = 'pla_pre_update_data';
 
 // ── Simplified theme mirroring ──
+async function getProjectionLabTabId() {
+  // First try session storage (set by content script registration)
+  const stored = await chrome.storage.session.get('activeContentTabId');
+  if (stored.activeContentTabId) return stored.activeContentTabId;
+
+  // Fallback: find a ProjectionLab tab directly
+  const tabs = await chrome.tabs.query({ url: 'https://app.projectionlab.com/*' });
+  if (tabs?.[0]?.id) {
+    await chrome.storage.session.set({ activeContentTabId: tabs[0].id });
+    return tabs[0].id;
+  }
+  return null;
+}
+
 async function applyProjectionLabTheme() {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id || !tab.url?.startsWith('https://app.projectionlab.com/')) {
-      console.log("[PLA:SidePanel] Not on ProjectionLab tab → using fallback light theme");
+    const tabId = await getProjectionLabTabId();
+    if (!tabId) {
+      console.log("[PLA:SidePanel] No ProjectionLab tab found → using fallback light theme");
       document.body.classList.add('fallback-light');
       return false;
     }
 
     const results = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
+      target: { tabId },
       world: 'MAIN',
       func: () => {
         const style = getComputedStyle(document.documentElement);

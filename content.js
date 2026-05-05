@@ -12,6 +12,28 @@ console.log("[PLA:Content] Extension ID:", chrome.runtime.id);
 const PRE_UPDATE_STORAGE_KEY = 'pla_pre_update_data';
 
 // Message listener
+// Register this content script's tab with the background service worker
+(function registerContentScript() {
+  chrome.runtime.sendMessage({ action: "contentScriptReady" }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.warn("[PLA:Content] Registration failed:", chrome.runtime.lastError.message);
+    } else {
+      console.log("[PLA:Content] Registered with background service worker");
+    }
+  });
+})();
+
+// Register this content script's tab with the background service worker
+(function registerContentScript() {
+  chrome.runtime.sendMessage({ action: "contentScriptReady" }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.warn("[PLA:Content] Registration failed:", chrome.runtime.lastError.message);
+    } else {
+      console.log("[PLA:Content] Registered with background service worker");
+    }
+  });
+})();
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log("[PLA:Content] MESSAGE RECEIVED from runtime:", request);
   console.log("[PLA:Content] Sender info:", sender);
@@ -191,7 +213,7 @@ Do NOT include any other text outside the Markdown (for analysis) or JSON (updat
 
               // Secondary LLM call with fresh data to generate accurate JSON
               console.log("[PLA:Content] Sending secondary LLM request with fresh data");
-              const updateMessages = [...request.messages, { role: 'assistant', content: llmResponse }];  // Include initial response
+              const updateMessages = [...request.messages, { role: 'assistant', content: llmResponse }, { role: 'user', content: 'Based on the above, respond only with the valid JSON update.' }];  // Claude 4.x requires conversation to end with a user message
               const updateJson = await fetchLLMResponse(
                 system,
                 updateMessages,
@@ -287,7 +309,13 @@ async function fetchLLMResponse(system, historyMessages, dataSummary, apiKey, ba
   console.log("[PLA:Content] History messages length:", historyMessages.length);
 
   // Append data summary to the last user message
-  const messages = historyMessages.map(m => ({ role: m.role, content: m.content }));
+  let messages = historyMessages.map(m => ({ role: m.role, content: m.content }));
+
+  // Claude 4.x: must end with user — strip trailing assistant turns
+  while (messages.length > 0 && messages[messages.length - 1].role !== 'user') {
+    messages = messages.slice(0, -1);
+  }
+
   if (messages.length > 0 && messages[messages.length - 1].role === 'user') {
     messages[messages.length - 1].content += `\n\nCurrent plan data (summary): ${dataSummary}`;
   }
@@ -323,21 +351,25 @@ async function fetchLLMResponse(system, historyMessages, dataSummary, apiKey, ba
   console.log("[PLA:Content] LLM request — endpoint:", endpoint);
   console.log("[PLA:Content] Request body length:", body.length);
 
-  const response = await fetch(endpoint, { method: 'POST', headers, body });
-  
-  console.log("[PLA:Content] LLM HTTP response status:", response.status, response.statusText);
+  // Route through background service worker (MV3 blocks cross-origin fetch from content scripts)
+  const result = await new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(
+      { action: "llmFetch", endpoint, headers, body },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+        } else if (response.error) {
+          reject(new Error(response.error));
+        } else {
+          resolve(response.data);
+        }
+      }
+    );
+  });
 
-  if (!response.ok) {
-    const text = await response.text();
-    console.error("[PLA:Content] LLM fetch failed — status:", response.status);
-    console.error("[PLA:Content] Error response body:", text);
-    throw new Error(`LLM HTTP error ${response.status}: ${text}`);
-  }
-
-  const data = await response.json();
-  console.log("[PLA:Content] LLM response JSON received — keys:", Object.keys(data));
+  console.log("[PLA:Content] LLM response JSON received — keys:", Object.keys(result));
 
   return provider === 'anthropic'
-    ? data.content?.[0]?.text?.trim() || ""
-    : data.choices?.[0]?.message?.content?.trim() || "";
+    ? result.content?.[0]?.text?.trim() || ""
+    : result.choices?.[0]?.message?.content?.trim() || "";
 }
